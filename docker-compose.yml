@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: flexype-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - flexype-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: flexype-postgres
+    environment:
+      POSTGRES_USER: flexype
+      POSTGRES_PASSWORD: hackathon2026
+      POSTGRES_DB: inventory_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flexype"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - flexype-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: flexype-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://flexype:hackathon2026@postgres:5432/inventory_system
+      - JWT_SECRET=your-super-secret-key-change-in-production
+      - JWT_ALGORITHM=HS256
+      - JWT_EXPIRY_MINUTES=15
+      - RESERVATION_TTL_SECONDS=300
+      - RATE_LIMIT_PER_MINUTE=10
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - flexype-network
+
+  expiry-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: flexype-expiry-worker
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://flexype:hackathon2026@postgres:5432/inventory_system
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: python -m app.workers.expiry_worker
+    networks:
+      - flexype-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: flexype-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - flexype-network
+
+volumes:
+  redis-data:
+  postgres-data:
+
+networks:
+  flexype-network:
+    driver: bridge
