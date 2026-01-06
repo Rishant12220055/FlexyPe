@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, Request, Header, WebSocket, WebSocketDisconnect
 from typing import Optional
 from datetime import datetime, timezone
 import uuid
 import logging
 
+from app.core.websocket import manager
 from app.models.schemas import (
     ReserveInventoryRequest,
     ReserveInventoryResponse,
@@ -43,13 +44,6 @@ async def reserve_inventory(
 ):
     """
     Reserve inventory for a user.
-    
-    This endpoint atomically checks and decrements inventory using Redis Lua scripts
-    to prevent race conditions and overselling.
-    
-    **Idempotency**: Include `X-Idempotency-Key` header to safely retry requests.
-    
-    **Rate Limit**: 10 requests per minute per user.
     """
     trace_id = str(uuid.uuid4())
     
@@ -87,6 +81,18 @@ async def reserve_inventory(
             f"Reservation: {reservation_id}"
         )
         
+        # Broadcast update (fire and forget)
+        try:
+            status = reservation_service.get_inventory_status(payload.sku)
+            await manager.broadcast(payload.sku, {
+                "type": "update",
+                "sku": payload.sku,
+                "available": status["available"],
+                "total": status["total"]
+            })
+        except Exception as e:
+            logger.error(f"Failed to broadcast update: {e}")
+            
         return response
         
     except InsufficientInventoryError as e:
@@ -132,8 +138,6 @@ async def reserve_inventory(
 async def get_inventory_status(sku: str):
     """
     Get current inventory status for a SKU.
-    
-    Returns available quantity and reservation information.
     """
     try:
         status = reservation_service.get_inventory_status(sku)
@@ -157,12 +161,18 @@ async def initialize_inventory(
     current_user: str = Depends(get_current_user)
 ):
     """
-    Initialize inventory for a SKU (admin only - simplified for hackathon).
-    
-    In production, this would require admin role verification.
+    Initialize inventory for a SKU.
     """
     try:
         reservation_service.set_inventory(sku, quantity)
+        
+        # Broadcast update
+        await manager.broadcast(sku, {
+            "type": "update",
+            "sku": sku,
+            "available": quantity, # Approximation for init
+            "total": quantity
+        })
         
         return {
             "message": f"Initialized {quantity} units for {sku}",
@@ -173,3 +183,25 @@ async def initialize_inventory(
     except Exception as e:
         logger.error(f"Error initializing inventory: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.websocket("/ws/{sku}")
+async def websocket_endpoint(websocket: WebSocket, sku: str):
+    await manager.connect(websocket, sku)
+    try:
+        # Send initial state
+        status = reservation_service.get_inventory_status(sku)
+        await websocket.send_json({
+            "type": "initial",
+            "sku": sku,
+            "available": status["available"],
+            "total": status["total"]
+        })
+        
+        while True:
+            await websocket.receive_text()
+            
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, sku)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        manager.disconnect(websocket, sku)

@@ -44,8 +44,41 @@ export default function FlashSale() {
 
     useEffect(() => {
         loadInventory();
-        const interval = setInterval(loadInventory, 5000); // Refresh every 5 seconds
-        return () => clearInterval(interval);
+
+        // Setup WebSocket
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/api/v1/inventory/ws/${sku}`;
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            console.log('Connected to inventory stream');
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'update' || data.type === 'initial') {
+                    setInventory({
+                        available: data.available,
+                        total: data.total
+                    });
+                }
+            } catch (e) {
+                console.error('WebSocket message error:', e);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+
+        // Fallback polling (less frequent)
+        const interval = setInterval(loadInventory, 10000);
+
+        return () => {
+            ws.close();
+            clearInterval(interval);
+        };
     }, [sku]);
 
     const loadInventory = async () => {
