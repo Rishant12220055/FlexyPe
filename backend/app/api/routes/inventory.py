@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import logging
 
@@ -67,13 +67,19 @@ async def reserve_inventory(
             idempotency_key=x_idempotency_key
         )
         
+        # Ensure datetimes are timezone-aware (UTC)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+        server_time = datetime.now(timezone.utc)
+
         response = ReserveInventoryResponse(
             reservation_id=reservation_id,
             sku=payload.sku,
             quantity=payload.quantity,
             expires_at=expires_at,
             ttl_seconds=settings.RESERVATION_TTL_SECONDS,
-            server_time=datetime.utcnow()
+            server_time=server_time
         )
         
         logger.info(
