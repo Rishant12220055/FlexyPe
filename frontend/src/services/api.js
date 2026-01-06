@@ -59,9 +59,8 @@ class APIClient {
 
     async reserveInventory(sku, quantity, idempotencyKey = null) {
         const headers = {};
-        if (idempotencyKey) {
-            headers['X-Idempotency-Key'] = idempotencyKey;
-        }
+        const key = idempotencyKey || this._generateUUID();
+        headers['X-Idempotency-Key'] = key;
 
         const response = await this.client.post(
             '/inventory/reserve',
