@@ -71,8 +71,9 @@ async def reserve_inventory(
             reservation_id=reservation_id,
             sku=payload.sku,
             quantity=payload.quantity,
-            expires_at=expires_at.isoformat() + 'Z',
-            ttl_seconds=settings.RESERVATION_TTL_SECONDS
+            expires_at=expires_at,
+            ttl_seconds=settings.RESERVATION_TTL_SECONDS,
+            server_time=datetime.utcnow()
         )
         
         logger.info(

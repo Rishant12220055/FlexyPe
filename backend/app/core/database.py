@@ -23,6 +23,16 @@ Base = declarative_base()
 
 
 # Database Models
+class User(Base):
+    """User model for authentication."""
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), unique=True, nullable=False, index=True)  # Username
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Order(Base):
     """Order model for tracking confirmed purchases."""
     __tablename__ = "orders"

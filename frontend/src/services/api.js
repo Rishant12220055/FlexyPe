@@ -22,16 +22,16 @@ class APIClient {
     }
 
     // Auth
-    async login(userId) {
-        const response = await this.client.post('/auth/login', { user_id: userId });
+    async login(userId, password) {
+        const response = await this.client.post('/auth/login', { user_id: userId, password });
         const { access_token } = response.data;
         localStorage.setItem('authToken', access_token);
         localStorage.setItem('userId', userId);
         return response.data;
     }
 
-    async register(userId) {
-        const response = await this.client.post('/auth/register', { user_id: userId });
+    async register(userId, password) {
+        const response = await this.client.post('/auth/register', { user_id: userId, password });
         const { access_token } = response.data;
         localStorage.setItem('authToken', access_token);
         localStorage.setItem('userId', userId);
@@ -78,10 +78,23 @@ class APIClient {
         return response.data;
     }
 
+    // Helper for Idempotency
+    _generateUUID() {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            return crypto.randomUUID();
+        }
+        return Math.random().toString(36).substring(2) + Date.now().toString(36);
+    }
+
     // Checkout
-    async confirmCheckout(reservationId) {
+    async confirmCheckout(reservationId, idempotencyKey = null) {
+        const key = idempotencyKey || this._generateUUID();
         const response = await this.client.post('/checkout/confirm', {
             reservation_id: reservationId,
+        }, {
+            headers: {
+                'X-Idempotency-Key': key
+            }
         });
         return response.data;
     }

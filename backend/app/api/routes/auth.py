@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from app.core.auth import create_access_token
+from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from app.core.auth import create_access_token, get_password_hash, verify_password
+from app.core.database import get_db, User
 import logging
 
 logger = logging.getLogger(__name__)
@@ -8,8 +10,15 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 
 class LoginRequest(BaseModel):
-    """Login request model (simplified for hackathon)."""
-    user_id: str
+    """Login request model."""
+    user_id: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6)
+
+
+class RegisterRequest(BaseModel):
+    """Registration request model."""
+    user_id: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6)
 
 
 class LoginResponse(BaseModel):
@@ -23,26 +32,28 @@ class LoginResponse(BaseModel):
     "/login",
     response_model=LoginResponse,
     responses={
-        200: {"description": "Login successful"}
+        200: {"description": "Login successful"},
+        401: {"description": "Invalid credentials"}
     }
 )
-async def login(payload: LoginRequest):
-    """
-    Simplified login endpoint for hackathon.
-    
-    In production, this would:
-    - Validate credentials against database
-    - Hash and compare passwords
-    - Implement account lockout
-    - Add MFA support
-    
-    For now, accepts any user_id and issues JWT token.
-    """
+async def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    """Authenticate user and return JWT token."""
     try:
-        # Create JWT token
-        token = create_access_token(payload.user_id)
+        # Find user
+        user = db.query(User).filter(User.user_id == payload.user_id).first()
         
-        logger.info(f"User {payload.user_id} logged in")
+        if not user or not verify_password(payload.password, user.password_hash):
+            logger.warning(f"Failed login attempt for user: {payload.user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Create JWT token
+        token = create_access_token(user.user_id)
+        
+        logger.info(f"User {payload.user_id} logged in successfully")
         
         return LoginResponse(
             access_token=token,
@@ -50,6 +61,8 @@ async def login(payload: LoginRequest):
             expires_in=900  # 15 minutes
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Login error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -60,26 +73,33 @@ async def login(payload: LoginRequest):
     response_model=LoginResponse,
     status_code=201,
     responses={
-        201: {"description": "Registration successful"}
+        201: {"description": "Registration successful"},
+        409: {"description": "User already exists"}
     }
 )
-async def register(payload: LoginRequest):
-    """
-    Simplified registration endpoint for hackathon.
-    
-    In production, this would:
-    - Validate email format
-    - Hash password with bcrypt
-    - Store user in database
-    - Send verification email
-    
-    For now, immediately issues JWT token.
-    """
+async def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    """Register new user."""
     try:
-        # Create JWT token
-        token = create_access_token(payload.user_id)
+        # Check if user exists
+        if db.query(User).filter(User.user_id == payload.user_id).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Username already taken"
+            )
+            
+        # Create new user
+        user = User(
+            user_id=payload.user_id,
+            password_hash=get_password_hash(payload.password)
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
         
-        logger.info(f"User {payload.user_id} registered")
+        # Create JWT token
+        token = create_access_token(user.user_id)
+        
+        logger.info(f"User {payload.user_id} registered successfully")
         
         return LoginResponse(
             access_token=token,
@@ -87,6 +107,8 @@ async def register(payload: LoginRequest):
             expires_in=900  # 15 minutes
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Registration error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -115,10 +115,9 @@ class ReservationService:
             created_at=created_at
         )
         
-        # Store reservation with TTL
-        self.redis.setex(
+        # Store reservation without TTL (persistence handled by worker)
+        self.redis.set(
             reservation_key,
-            settings.RESERVATION_TTL_SECONDS,
             reservation_data.model_dump_json()
         )
         
@@ -168,13 +167,14 @@ class ReservationService:
         
         return ReservationData.model_validate_json(data)
     
-    def confirm_reservation(self, reservation_id: str, user_id: str) -> ReservationData:
+    def confirm_reservation(self, reservation_id: str, user_id: str, grace_period_seconds: int = 5) -> ReservationData:
         """
         Confirm and delete reservation atomically.
         
         Args:
             reservation_id: Reservation to confirm
             user_id: User confirming (for ownership validation)
+            grace_period_seconds: Safety buffer for network latency
             
         Returns:
             ReservationData of confirmed reservation
@@ -189,11 +189,26 @@ class ReservationService:
         
         try:
             pipe.watch(reservation_key)
+            pipe.watch("expiring_reservations")
             
             # Get reservation
             data = pipe.get(reservation_key)
             if not data:
-                raise ValueError("Reservation not found or expired")
+                raise ValueError("Reservation not found")
+                
+            # Check expiration explicitly (since we removed key TTL)
+            expiry_score = pipe.zscore("expiring_reservations", reservation_id)
+            if not expiry_score:
+                 # It might be missing if processed by worker already
+                 raise ValueError("Reservation expired or invalid")
+            
+            # Apply grace period: strict expiry is score < now
+            # With grace period: expiry is score + grace < now
+            # So if (score + grace) > now, it is valid.
+            import time
+            current_timestamp = time.time()
+            if current_timestamp > (expiry_score + grace_period_seconds):
+                raise ValueError("Reservation expired")
             
             reservation = ReservationData.model_validate_json(data)
             

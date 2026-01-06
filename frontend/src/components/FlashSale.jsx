@@ -79,6 +79,22 @@ export default function FlashSale() {
 
         try {
             const data = await api.reserveInventory(sku, quantity);
+
+            // Clock Synchronization
+            if (data.server_time && data.expires_at) {
+                const serverTime = new Date(data.server_time).getTime();
+                const serverExpiry = new Date(data.expires_at).getTime();
+                const now = Date.now();
+                const remainingDuration = serverExpiry - serverTime;
+
+                // Adjust expires_at to be relative to client's clock
+                // LocalExpiry = Now + (ServerExpiry - ServerTime)
+                const adjustedExpiry = new Date(now + remainingDuration);
+                data.expires_at = adjustedExpiry.toISOString();
+
+                console.log(`Clock sync: Server gap ${now - serverTime}ms. Adjusted expiry to ${data.expires_at}`);
+            }
+
             setReservation(data);
             setSuccess('🎉 Successfully reserved ' + quantity + ' item(s)!');
             await loadInventory();

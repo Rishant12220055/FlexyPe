@@ -58,29 +58,63 @@ async def confirm_checkout(
             f"for reservation {payload.reservation_id}"
         )
         
-        # Confirm reservation (validates ownership and atomically deletes)
+        # 1. Create PENDING Order in Postgres first (Dual-Write safety)
+        order_id = f"ord_{uuid.uuid4().hex[:10]}"
+        price_per_unit = Decimal("29.99")
+        
+        # We don't have reservation details yet unless we get them from Redis first WITHOUT consuming.
+        # But get_reservation is safe.
+        reservation_data = reservation_service.get_reservation(payload.reservation_id)
+        if not reservation_data:
+             # Fail early if not found, no need to create pending order
+             pass # Will be caught by confirm_reservation error or handle here.
+             # Actually, simpler: Try to confirm. If it fails, we have nothing.
+             # The Dual-Write problem is: We delete from Redis, then DB fails.
+             # So we MUST create DB record first. To create DB record, we need data.
+        
+        if not reservation_data:
+             # Let confirm_reservation handle the 404 logic/error raising
+             pass
+        else:
+             # Create Pending Order
+             initial_order = Order(
+                order_id=order_id,
+                user_id=current_user,
+                status="pending",
+                total_amount=price_per_unit * reservation_data.quantity,
+                created_at=datetime.utcnow()
+             )
+             db.add(initial_order)
+             db.commit()
+             db.refresh(initial_order)
+        
+        # 2. Confirm reservation (atomically delete from Redis)
         try:
             reservation = reservation_service.confirm_reservation(
                 payload.reservation_id,
                 current_user
             )
-        except ValueError as e:
-            error_msg = str(e)
+        except Exception as e:
+            # If we created an order, mark it as failed
+            if reservation_data:
+                order_to_fail = db.query(Order).filter(Order.order_id == order_id).first()
+                if order_to_fail:
+                    order_to_fail.status = "failed"
+                    db.commit()
             
-            if "not found" in error_msg.lower():
-                # Check if item is available again
-                # (simplified - in production would query actual SKU)
+            # Re-raise to handle specific HTTP exceptions
+            error_msg = str(e)
+            if "not found" in error_msg.lower() or "expired" in error_msg.lower():
                 raise HTTPException(
                     status_code=404,
                     detail={
                         "type": "https://api.flexype.com/errors/reservation-expired",
                         "title": "Reservation expired",
                         "status": 404,
-                        "detail": "Your reservation has expired. Please reserve the item again.",
+                        "detail": "Your reservation has expired.",
                         "trace_id": trace_id
                     }
                 )
-            
             elif "another user" in error_msg.lower():
                 raise HTTPException(
                     status_code=403,
@@ -92,25 +126,19 @@ async def confirm_checkout(
                         "trace_id": trace_id
                     }
                 )
-            
-            raise
+            raise e
+
+        # 3. Update Order to CONFIRMED (Success)
+        # We might need to re-fetch if we didn't create it above (edge case where get_reservation failed but confirm succeeded? Impossible).
+        # But wait, if get_reservation returned None, we skipped creation. confirm_reservation would have failed.
+        # So we can assume order exists if we reached here.
         
-        # Create order in database
-        order_id = f"ord_{uuid.uuid4().hex[:10]}"
-        
-        # Mock price (in production, fetch from product catalog)
-        price_per_unit = Decimal("29.99")
-        total_amount = price_per_unit * reservation.quantity
-        
-        # Create order
-        order = Order(
-            order_id=order_id,
-            user_id=current_user,
-            status="confirmed",
-            total_amount=total_amount,
-            created_at=datetime.utcnow()
-        )
-        db.add(order)
+        order = db.query(Order).filter(Order.order_id == order_id).first()
+        if not order:
+             # Should not happen
+             raise HTTPException(500, "Order state lost")
+             
+        order.status = "confirmed"
         
         # Create order item
         order_item = OrderItem(
@@ -130,13 +158,12 @@ async def confirm_checkout(
             details={
                 "order_id": order_id,
                 "quantity": reservation.quantity,
-                "total_amount": float(total_amount)
+                "total_amount": float(order.total_amount)
             },
             timestamp=datetime.utcnow()
         )
         db.add(audit)
         
-        # Commit transaction
         db.commit()
         
         logger.info(
@@ -152,7 +179,7 @@ async def confirm_checkout(
                 "quantity": reservation.quantity,
                 "price_per_unit": float(price_per_unit)
             }],
-            total=float(total_amount)
+            total=float(order.total_amount)
         )
         
         return response

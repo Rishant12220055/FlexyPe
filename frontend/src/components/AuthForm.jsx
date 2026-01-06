@@ -3,33 +3,52 @@ import api from '../services/api';
 import '../styles/AuthForm.css';
 
 export default function AuthForm({ onAuthSuccess }) {
+    const [isLoginMode, setIsLoginMode] = useState(true);
     const [userId, setUserId] = useState('');
+    const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [successMsg, setSuccessMsg] = useState('');
 
-    const handleSubmit = async (e, isRegister = false) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!userId.trim()) {
-            setError('Please enter a user ID');
+        if (!userId.trim() || !password.trim()) {
+            setError('Please enter both User ID and Password');
+            return;
+        }
+
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters');
             return;
         }
 
         setLoading(true);
         setError('');
+        setSuccessMsg('');
 
         try {
-            if (isRegister) {
-                await api.register(userId);
+            if (isLoginMode) {
+                await api.login(userId, password);
+                onAuthSuccess();
             } else {
-                await api.login(userId);
+                await api.register(userId, password);
+                setSuccessMsg('Registration successful! Logging you in...');
+                setTimeout(() => {
+                    onAuthSuccess();
+                }, 1000);
             }
-            onAuthSuccess();
         } catch (err) {
             setError(err.response?.data?.detail || 'Authentication failed');
         } finally {
             setLoading(false);
         }
+    };
+
+    const toggleMode = () => {
+        setIsLoginMode(!isLoginMode);
+        setError('');
+        setSuccessMsg('');
     };
 
     return (
@@ -42,18 +61,37 @@ export default function AuthForm({ onAuthSuccess }) {
                     <p className="auth-subtitle">Smart Inventory Reservation System</p>
                 </div>
 
-                <form className="auth-form" onSubmit={(e) => handleSubmit(e, false)}>
+                <form className="auth-form" onSubmit={handleSubmit}>
+                    <h2 className="form-title" style={{ textAlign: 'center', marginBottom: '1.5rem', fontSize: '1.25rem', fontWeight: 'bold' }}>
+                        {isLoginMode ? 'Welcome Back' : 'Create Account'}
+                    </h2>
+
                     <div className="form-group">
                         <label htmlFor="userId" className="form-label">
-                            User ID
+                            Username
                         </label>
                         <input
                             id="userId"
                             type="text"
                             className="input"
-                            placeholder="Enter your user ID (e.g., user_123)"
+                            placeholder="Enter username"
                             value={userId}
                             onChange={(e) => setUserId(e.target.value)}
+                            disabled={loading}
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="password" className="form-label">
+                            Password
+                        </label>
+                        <input
+                            id="password"
+                            type="password"
+                            className="input"
+                            placeholder="Enter password (min 6 chars)"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
                             disabled={loading}
                         />
                     </div>
@@ -64,36 +102,54 @@ export default function AuthForm({ onAuthSuccess }) {
                         </div>
                     )}
 
+                    {successMsg && (
+                        <div className="success-message animate-slideIn" style={{ color: '#4ade80', marginBottom: '1rem', textAlign: 'center' }}>
+                            ✅ {successMsg}
+                        </div>
+                    )}
+
                     <div className="auth-actions">
                         <button
                             type="submit"
                             className="btn btn-primary btn-lg"
                             disabled={loading}
+                            style={{ width: '100%' }}
                         >
                             {loading ? (
                                 <>
                                     <span className="spinner animate-spin">⭮</span>
-                                    Logging in...
+                                    {isLoginMode ? 'Logging in...' : 'Creating Account...'}
                                 </>
                             ) : (
-                                'Login'
+                                isLoginMode ? 'Login' : 'Register'
                             )}
-                        </button>
-
-                        <button
-                            type="button"
-                            className="btn btn-secondary btn-lg"
-                            onClick={(e) => handleSubmit(e, true)}
-                            disabled={loading}
-                        >
-                            Register
                         </button>
                     </div>
 
-                    <div className="auth-info">
-                        <p className="text-secondary text-center">
-                            💡 This is a simplified auth for the hackathon demo
-                        </p>
+                    <div className="auth-footer" style={{ marginTop: '1.5rem', textAlign: 'center', color: '#94a3b8' }}>
+                        {isLoginMode ? (
+                            <p>
+                                Don't have an account?{' '}
+                                <button
+                                    type="button"
+                                    onClick={toggleMode}
+                                    style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit' }}
+                                >
+                                    Register
+                                </button>
+                            </p>
+                        ) : (
+                            <p>
+                                Already have an account?{' '}
+                                <button
+                                    type="button"
+                                    onClick={toggleMode}
+                                    style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit' }}
+                                >
+                                    Login
+                                </button>
+                            </p>
+                        )}
                     </div>
                 </form>
             </div>

@@ -33,8 +33,9 @@ class ReserveInventoryResponse(BaseModel):
     reservation_id: str
     sku: str
     quantity: int
-    expires_at: str  # ISO 8601 timestamp
+    expires_at: datetime
     ttl_seconds: int
+    server_time: datetime
 
 
 class ConfirmCheckoutResponse(BaseModel):
