@@ -214,6 +214,35 @@ class ReservationService:
             pipe.reset()
             raise e
     
+    def cancel_reservation(self, reservation_id: str, user_id: str) -> bool:
+        """
+        Cancel a reservation manually (user initiated).
+        
+        Args:
+            reservation_id: Reservation to cancel
+            user_id: User canceling (for ownership validation)
+            
+        Returns:
+            True if canceled, False if already gone
+            
+        Raises:
+            ValueError: If reservation belongs to another user
+        """
+        reservation_key = self._get_reservation_key(reservation_id)
+        
+        # Get reservation data to validate ownership
+        data = self.redis.get(reservation_key)
+        if not data:
+            return False
+            
+        reservation = ReservationData.model_validate_json(data)
+        
+        if reservation.user_id != user_id:
+            raise ValueError("This reservation belongs to another user")
+            
+        # Re-use existing release logic
+        return self.release_reservation(reservation_id)
+
     def release_reservation(self, reservation_id: str) -> bool:
         """
         Release expired reservation and restore inventory.
@@ -244,7 +273,7 @@ class ReservationService:
         self.redis.zrem("expiring_reservations", reservation_id)
         
         logger.info(
-            f"Released expired reservation {reservation_id}. "
+            f"Released expired/canceled reservation {reservation_id}. "
             f"Restored {reservation.quantity} units of {reservation.sku}"
         )
         

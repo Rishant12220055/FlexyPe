@@ -86,6 +86,13 @@ class APIClient {
         return response.data;
     }
 
+    async cancelReservation(reservationId) {
+        const response = await this.client.post('/checkout/cancel', {
+            reservation_id: reservationId,
+        });
+        return response.data;
+    }
+
     async getOrder(orderId) {
         const response = await this.client.get(`/checkout/orders/${orderId}`);
         return response.data;

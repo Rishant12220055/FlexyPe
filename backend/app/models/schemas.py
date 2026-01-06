@@ -22,6 +22,11 @@ class ConfirmCheckoutRequest(BaseModel):
     reservation_id: str = Field(..., min_length=1, max_length=20)
 
 
+class CancelCheckoutRequest(BaseModel):
+    """Request model for canceling checkout."""
+    reservation_id: str = Field(..., min_length=1, max_length=20)
+
+
 # Response Models
 class ReserveInventoryResponse(BaseModel):
     """Response model for successful inventory reservation."""
@@ -38,6 +43,12 @@ class ConfirmCheckoutResponse(BaseModel):
     status: str
     items: List[dict]
     total: float
+
+
+class CancelCheckoutResponse(BaseModel):
+    """Response model for successful checkout cancellation."""
+    status: str
+    message: str
 
 
 class InventoryStatusResponse(BaseModel):

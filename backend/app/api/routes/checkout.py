@@ -7,6 +7,8 @@ from decimal import Decimal
 from app.models.schemas import (
     ConfirmCheckoutRequest,
     ConfirmCheckoutResponse,
+    CancelCheckoutRequest,
+    CancelCheckoutResponse,
     ProblemDetail
 )
 from app.services.reservation_service import ReservationService
@@ -175,6 +177,84 @@ async def confirm_checkout(
                 "trace_id": trace_id
             }
         )
+
+
+@router.post(
+    "/cancel",
+    response_model=CancelCheckoutResponse,
+    status_code=200,
+    responses={
+        200: {"description": "Reservation canceled successfully"},
+        404: {"model": ProblemDetail, "description": "Reservation not found"},
+        403: {"model": ProblemDetail, "description": "Reservation belongs to another user"}
+    }
+)
+async def cancel_checkout(
+    request: Request,
+    payload: CancelCheckoutRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Cancel checkout and release inventory.
+    """
+    trace_id = str(uuid.uuid4())
+    
+    try:
+        logger.info(
+            f"[{trace_id}] Checkout cancellation request from user {current_user} "
+            f"for reservation {payload.reservation_id}"
+        )
+        
+        try:
+            success = reservation_service.cancel_reservation(
+                payload.reservation_id,
+                current_user
+            )
+            
+            if not success:
+               # Already expired or gone, which is fine, treat as success or 404.
+               # Similar to DELETE behavior, often idempotent success is preferred,
+               # but user might want to know if it was ALREADY expired.
+               # Let's return 404 if not found to be explicit.
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "type": "https://api.flexype.com/errors/not-found",
+                        "title": "Reservation not found",
+                        "status": 404,
+                        "detail": "Reservation not found or already expired",
+                        "trace_id": trace_id
+                    }
+                )
+
+        except ValueError as e:
+            if "another user" in str(e).lower():
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "type": "https://api.flexype.com/errors/forbidden",
+                        "title": "Access denied",
+                        "status": 403,
+                        "detail": "This reservation belongs to another user",
+                        "trace_id": trace_id
+                    }
+                )
+            raise
+
+        return CancelCheckoutResponse(
+            status="canceled",
+            message="Reservation released successfully"
+        )
+        
+    except HTTPException:
+        raise
+        
+    except Exception as e:
+        logger.error(
+            f"[{trace_id}] Error canceling checkout: {str(e)}",
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(

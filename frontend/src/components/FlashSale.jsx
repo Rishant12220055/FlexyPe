@@ -13,6 +13,35 @@ export default function FlashSale() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
+    // Restore reservation from local storage on mount
+    useEffect(() => {
+        const savedReservation = localStorage.getItem('current_reservation');
+        if (savedReservation) {
+            try {
+                const data = JSON.parse(savedReservation);
+                // Check if not expired
+                if (new Date(data.expires_at) > new Date()) {
+                    setReservation(data);
+                    console.log('Restored active reservation:', data);
+                } else {
+                    localStorage.removeItem('current_reservation');
+                }
+            } catch (e) {
+                console.error('Failed to restore reservation:', e);
+                localStorage.removeItem('current_reservation');
+            }
+        }
+    }, []);
+
+    // Persist reservation to local storage
+    useEffect(() => {
+        if (reservation) {
+            localStorage.setItem('current_reservation', JSON.stringify(reservation));
+        } else {
+            localStorage.removeItem('current_reservation');
+        }
+    }, [reservation]);
+
     useEffect(() => {
         loadInventory();
         const interval = setInterval(loadInventory, 5000); // Refresh every 5 seconds
@@ -92,11 +121,25 @@ export default function FlashSale() {
         }
     };
 
-    const handleCancelReservation = () => {
-        setReservation(null);
-        setSuccess('');
-        setError('');
-        loadInventory();
+    const handleCancelReservation = async () => {
+        if (!reservation) return;
+
+        setLoading(true);
+        try {
+            await api.cancelReservation(reservation.reservation_id);
+            setReservation(null);
+            setSuccess('Reservation canceled successfully.');
+            setError('');
+            await loadInventory();
+        } catch (err) {
+            console.error('Failed to cancel reservation:', err);
+            // Even if API fails (e.g. already expired), clear local state
+            setReservation(null);
+            setError('');
+            loadInventory();
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleReservationExpire = () => {
